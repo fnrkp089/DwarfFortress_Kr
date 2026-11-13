@@ -1,0 +1,13 @@
+Dwarf Fortress 한국어 패치 번역 데이터
+
+대상: dfkr-data/dict 폴더의 사전 파일 (한국어 번역문, 문장 틀, 이름 낱말 표)
+
+Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)
+https://creativecommons.org/licenses/by-nc/4.0/legalcode.ko
+
+요약 (법적 효력은 위 주소의 전문에 있습니다)
+- 출처를 밝히면 복사하고, 나누고, 고쳐 쓸 수 있습니다.
+- 영리 목적으로는 쓸 수 없습니다.
+
+사전 파일에 실린 영어 원문은 Dwarf Fortress 의 글이며 저작권은 Bay 12 Games 에 있습니다.
+이 라이선스는 한국어 번역문에만 적용됩니다. 권리자가 요청하면 배포를 내립니다.

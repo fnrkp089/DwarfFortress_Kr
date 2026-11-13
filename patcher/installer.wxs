@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 설치 패키지 (WiX 5)
+     build_package.py 가 만든 폴더(서명된 Python 런타임 + 프로그램 소스 + 패치 파일)를 그대로 깔고 바로가기를 만든다.
+     설치 프로그램을 exe 가 아니라 msi 로 만드는 까닭: 서명 없는 설치 exe 는 백신의 머신러닝 추정에 걸린다.
+
+     wix build -ext WixToolset.Util.wixext -d Version=0.8.0 -d SourceDir=폴더 -d RepoUrl=주소 -o out.msi installer.wxs -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="Dwarf Fortress 한국어 패치" Manufacturer="Kemmochi" Version="$(Version)"
+           UpgradeCode="A49B3E4F-31B8-48EE-938F-2D377C734072" Scope="perUser"
+           Language="1042" Codepage="949" InstallerVersion="500" Compressed="yes">
+    <SummaryInformation Description="Dwarf Fortress 한국어 패치 $(Version)" Manufacturer="Kemmochi" Codepage="949" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="더 새로운 버전이 이미 설치되어 있습니다." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="AppIcon" SourceFile="$(SourceDir)\app\icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="$(RepoUrl)" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- 사용자 폴더에 설치: 관리자 권한을 묻지 않고, 프로그램이 app 폴더를 스스로 업데이트할 수 있다 -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="DFKr" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Dwarf Fortress 한국어 패치">
+      <ComponentGroupRef Id="PackageFiles" />
+      <ComponentRef Id="FolderCleanup" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <ComponentGroup Id="PackageFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(SourceDir)\**" />
+    </ComponentGroup>
+
+    <!-- 제거할 때 설치 폴더를 통째로 지운다: 스스로 업데이트해서 바뀐 app 폴더, 창 글꼴 사본(ui), 기억해 둔 게임 폴더(settings.json).
+         제거 시점에는 경로를 레지스트리에서 읽는다. 게임 폴더는 건드리지 않는다 (패치는 프로그램의 [원래대로]로 뺀다). -->
+    <Property Id="DFKRFOLDER">
+      <RegistrySearch Id="InstallFolderSearch" Root="HKCU" Key="Software\DFKr" Name="InstallFolder" Type="raw" />
+    </Property>
+    <Component Id="FolderCleanup" Directory="INSTALLFOLDER" Guid="6D7CC623-057A-47ED-8591-0E5F78671FD2">
+      <RegistryValue Root="HKCU" Key="Software\DFKr" Name="InstallFolder" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+      <util:RemoveFolderEx On="uninstall" Property="DFKRFOLDER" />
+    </Component>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="C3EA636A-0D96-4C25-8FF0-A7A9C889DB52">
+        <Shortcut Id="StartMenuLink" Name="Dwarf Fortress 한국어 패치" Target="[INSTALLFOLDER]runtime\pythonw.exe"
+                  Arguments="-B &quot;[INSTALLFOLDER]app\patcher.py&quot;" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
+        <RegistryValue Root="HKCU" Key="Software\DFKr" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="E0B2C565-1637-40C8-B668-483D1A282040">
+        <Shortcut Id="DesktopLink" Name="Dwarf Fortress 한국어 패치" Target="[INSTALLFOLDER]runtime\pythonw.exe"
+                  Arguments="-B &quot;[INSTALLFOLDER]app\patcher.py&quot;" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
+        <RegistryValue Root="HKCU" Key="Software\DFKr" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!-- 더블클릭으로 설치했을 때만 끝나고 프로그램을 띄운다 (무인 설치 /qn 에서는 띄우지 않는다) -->
+    <CustomAction Id="LaunchPatcher" Directory="INSTALLFOLDER" Return="asyncNoWait" Impersonate="yes"
+                  ExeCommand="&quot;[INSTALLFOLDER]runtime\pythonw.exe&quot; -B &quot;[INSTALLFOLDER]app\patcher.py&quot;" />
+    <InstallExecuteSequence>
+      <Custom Action="LaunchPatcher" After="InstallFinalize" Condition="NOT Installed AND NOT REMOVE AND UILevel &gt; 3" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>
