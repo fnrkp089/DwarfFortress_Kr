@@ -312,6 +312,45 @@ def read_tokens(path: Path) -> dict:
 
 REAPPLY_HINT = "[한글패치 다시 적용]을 누르세요. 한글이 다시 켜집니다."
 
+# ---------------------------------------------------------------- 스팀 창작마당으로 깐 게임
+# 창작마당으로 받은 사람은 구독 폴더의 설치 파일(DFKR_Install.bat)이 게임 폴더에 작은 로더와 길잡이 파일만 놓는다.
+# 번역과 본체는 구독 폴더에 있고 스팀이 갱신한다. 그 게임에서는 이 프로그램으로 넣지도, 깃헙에서 새 버전을 받지도 않는다
+# (넣으면 스팀이 갱신하는 길이 끊긴다). 글꼴·이름 표기 같은 설정은 게임 폴더의 config.txt 라서 그대로 바꿀 수 있다.
+GUIDE_NAME = "workshop.txt"              # 길잡이 파일 (dfkr-data 안): [PATH:구독 폴더] 줄
+WORKSHOP_BAT = "DFKR_Install.bat"
+WORKSHOP_HINT = f"구독 폴더의 설치 파일({WORKSHOP_BAT})을 다시 실행하세요. 한글이 다시 켜집니다."
+WORKSHOP_BLOCK = ("이 게임에는 한국어 패치가 스팀 창작마당으로 설치되어 있습니다.\n"
+                  "번역과 본체는 스팀이 새 버전으로 바꿔 주므로 이 프로그램으로는 넣지 않습니다.\n"
+                  "글꼴과 이름 표기는 이 창에서 그대로 바꿀 수 있습니다.\n\n"
+                  "이 프로그램의 방식으로 바꾸려면 [원래대로]를 누른 뒤 [한글패치 적용]을 누르세요.")
+
+
+def workshop_info(game: Path):
+    """길잡이 파일이 있으면 창작마당으로 깐 게임이다: {"dir": 구독 폴더(못 찾으면 None), "version": 그 폴더의 번호, "paths": 적힌 폴더들}.
+    없으면 None (이 프로그램으로 깐 게임이거나 안 깐 게임)."""
+    guide = Path(game) / DATA_NAME / GUIDE_NAME
+    try:
+        raw = guide.read_bytes()
+    except OSError:
+        return None
+    try:
+        text = raw[2:].decode("utf-16-le") if raw[:2] == b"\xff\xfe" else raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = ""
+    paths = []
+    for m in re.finditer(r"\[PATH:([^\]\[]*)\]", text):
+        p = m.group(1).strip().strip('"').rstrip("\\/")
+        if p:
+            paths.append(Path(p) if os.path.isabs(p) else Path(game) / p)
+    found = next((p for p in paths if p.is_dir()), None)
+    version = ""
+    if found:
+        try:
+            version = (found / "version.txt").read_text(encoding="utf-8-sig").strip()
+        except OSError:
+            pass
+    return {"dir": found, "version": version, "paths": paths}
+
 
 def hook_status(game: Path, running=False):
     """지난 실행에서 한글이 켜졌는지. 훅이 남긴 dfkr-data/status.txt: {"on": bool, "reason": 글, "advice": 할 일} 또는 None.
@@ -319,15 +358,16 @@ def hook_status(game: Path, running=False):
     data = game / DATA_NAME
     tok = read_tokens(data / "status.txt")
     patch = tok.get("PATCH", "").strip()
+    hint = WORKSHOP_HINT if (data / GUIDE_NAME).exists() else REAPPLY_HINT     # 창작마당으로 깐 게임은 설치 파일이 다시 켠다
     if (data / "starting.flag").exists() and not running:
         # 훅은 켜질 때 이 파일을 만들고 처음 몇 초가 무사히 지나면 지운다: 게임이 꺼져 있는데 남아 있으면 켜지다가 꺼진 것이다
         return {"on": False, "crashed": True, "reason": "게임이 켜지다가 바로 꺼졌습니다. 이대로 켜면 영어로 실행됩니다.",
-                "advice": REAPPLY_HINT, "patch": patch}
+                "advice": hint, "patch": patch}
     if "STATE" not in tok:
         return None
     on = tok["STATE"].strip().upper() == "ON"
     reason = tok.get("REASON", "").strip()
-    advice = REAPPLY_HINT if not on and "시작 도중" in reason else ""      # 훅이 스스로 꺼 둔 때의 사유 글
+    advice = hint if not on and "시작 도중" in reason else ""      # 훅이 스스로 꺼 둔 때의 사유 글
     return {"on": on, "crashed": False, "reason": reason, "advice": advice, "patch": patch}
 
 
@@ -344,7 +384,21 @@ def status(game: Path) -> dict:
     dfhack = dfhack_present(game)
     running = is_game_running(game)
     problem = None
-    if state:
+    workshop = workshop_info(game)
+    if workshop:
+        # 창작마당으로 깐 게임: 설치 기록(installed.json)이 없다. 번호는 구독 폴더의 것 (스팀이 바꾸면 따라 바뀐다)
+        loader = chained if chained.exists() else main if ours_main else None
+        try:
+            when = datetime.datetime.fromtimestamp((game / DATA_NAME / GUIDE_NAME).stat().st_mtime).isoformat(timespec="seconds")
+        except OSError:
+            when = ""
+        state = {"patch_version": workshop["version"] or "?", "installed_at": when, "game_version": version,
+                 "exe_timestamp": f"0x{ts:08X}", "dll_name": loader.name if loader else "", "channel": "workshop"}
+        if not workshop["dir"]:
+            problem = f"창작마당 구독 폴더를 찾지 못했습니다 (구독을 취소했거나 스팀 라이브러리를 옮겼습니다). {WORKSHOP_HINT}"
+        elif not loader:
+            problem = f"게임 폴더에 한국어 패치의 로더가 없습니다. {WORKSHOP_HINT}"
+    elif state:
         if chained.exists() and not main.exists():
             problem = "DFHack 이 빠져서 한국어 패치가 불리지 않습니다. [한글패치 다시 적용]을 눌러 주세요."
         elif not ours_main and not chained.exists():
@@ -366,6 +420,8 @@ def status(game: Path) -> dict:
         "hook": hook_status(game, running) if state else None,
         "record": (game / DATA_NAME / RECORD_FLAG).exists(),
         "running": running,
+        "channel": "workshop" if workshop else "program" if state else None,
+        "workshop_dir": str(workshop["dir"]) if workshop and workshop["dir"] else None,
     }
 
 
@@ -396,6 +452,8 @@ def config_version(blob: bytes) -> int:
 
 def install(game: Path, log=print):
     payload = payload_dir()
+    if workshop_info(game):
+        raise PatchError(WORKSHOP_BLOCK)
     st = status(game)
     if st["running"]:
         raise PatchError("게임이 실행 중입니다. 게임을 끄고 다시 눌러 주세요.")
@@ -459,6 +517,8 @@ def update_dict(game: Path, log=print):
     """사전(번역 데이터)만 갈아 끼운다. 게임이 켜져 있어도 되고, 게임 안에서 Ctrl+F3 을 누르면 바로 반영된다."""
     payload = payload_dir()
     dst = game / DATA_NAME / "dict"
+    if workshop_info(game):
+        raise PatchError(WORKSHOP_BLOCK)
     if not (game / DATA_NAME).is_dir():
         raise PatchError("한글패치가 설치되어 있지 않습니다. 먼저 [한글패치 적용]을 하세요.")
     tmp = game / DATA_NAME / "dict.new"
@@ -562,13 +622,18 @@ def current_font(game: Path) -> dict:
 def set_font(game: Path, choice: str, log=print, bold=None, scale=None):
     """한글 글꼴을 바꾼다. choice 는 FONT_PRESETS 의 이름이거나 글꼴 파일 경로. 게임을 다시 켜면 적용된다."""
     fonts = game / DATA_NAME / "fonts"
+    # 창작마당으로 깐 게임: 같이 들어 있는 글꼴은 구독 폴더에 있고, 직접 고른 글꼴만 게임 폴더의 fonts 에 둔다 (훅이 거기를 먼저 본다)
+    workshop = workshop_info(game)
+    if workshop:
+        fonts.mkdir(parents=True, exist_ok=True)
     if not fonts.is_dir():
         raise PatchError("한글패치가 설치되어 있지 않습니다. 먼저 [한글패치 적용]을 하세요.")
     key = choice.strip().lower()
     if key in FONT_PRESETS:
         label, name, grid, default_bold = FONT_PRESETS[key]
-        if not (fonts / name).exists():
-            raise PatchError(f"글꼴 파일이 없습니다: {name}. [한글패치 다시 적용]을 눌러 주세요.")
+        bundled = workshop and workshop["dir"] and (workshop["dir"] / "fonts" / name).exists()
+        if not (fonts / name).exists() and not bundled:
+            raise PatchError(f"글꼴 파일이 없습니다: {name}. " + (WORKSHOP_HINT if workshop else "[한글패치 다시 적용]을 눌러 주세요."))
     else:
         src = Path(choice.strip().strip('"'))
         if not src.is_file() or src.suffix.lower() not in FONT_EXTS:
@@ -1028,9 +1093,15 @@ def describe(st: dict) -> str:
     lines = [f"프로그램 버전: {st['available_version']}", f"게임 폴더: {st['game']}",
              f"게임 버전: {st['game_version']} (빌드 {st['exe_timestamp']})"]
     inst = st["installed"]
+    workshop = st.get("channel") == "workshop"
     if inst:
-        lines.append(f"한글패치: 적용됨 (v{inst.get('patch_version')}, {inst.get('installed_at', '')[:16].replace('T', ' ')}, {inst.get('dll_name', DLL_NAME)})")
-        if parse_version(inst.get("patch_version", "0")) < parse_version(st["available_version"]):
+        if workshop:
+            lines.append(f"한글패치: 스팀 창작마당으로 설치됨 (v{inst.get('patch_version')}, 로더 {inst.get('dll_name') or '없음'})")
+            lines.append(f"  구독 폴더: {st.get('workshop_dir') or '찾지 못함'}")
+            lines.append("  번역과 본체는 스팀이 갱신합니다. 이 프로그램의 [한글패치 적용]과 업데이트는 꺼 두었습니다.")
+        else:
+            lines.append(f"한글패치: 적용됨 (v{inst.get('patch_version')}, {inst.get('installed_at', '')[:16].replace('T', ' ')}, {inst.get('dll_name', DLL_NAME)})")
+        if not workshop and parse_version(inst.get("patch_version", "0")) < parse_version(st["available_version"]):
             lines.append(f"  새 버전 v{st['available_version']} 을 넣을 수 있습니다 (install).")
         if inst.get("exe_timestamp") != st["exe_timestamp"]:
             lines.append("  ※ 패치를 적용한 뒤에 게임이 업데이트되었습니다.")
@@ -1481,10 +1552,18 @@ def run_gui(game_arg=None, updated=False):
             inst = st["installed"]
             installed = bool(inst)
             why = why_incompatible(st)
+            workshop = st.get("channel") == "workshop"
+            was_workshop = state.get("channel") == "workshop"
+            state["channel"] = st.get("channel")
             rows["folder"].configure(text=str(st["game"]), fg=TEXT)
             rows["game"].configure(text=f"{st['game_version']} (빌드 {st['exe_timestamp']})")
             newer = False
-            if inst:
+            if workshop:
+                # 창작마당으로 깐 게임: 파일은 스팀이 댄다. 이 창은 설정(글꼴, 이름 표기)과 [원래대로]에만 쓴다
+                rows["patch"].configure(text=f"스팀 창작마당으로 설치됨  v{inst.get('patch_version')}\n번역과 본체는 스팀이 새 버전으로 바꿔 줍니다.", fg=GREEN)
+                rows["program"].configure(text=f"v{version}  (창작마당으로 설치한 게임이라 프로그램 업데이트는 꺼 두었습니다)", fg=DIM)
+                update_btn.frame.grid_remove()
+            elif inst:
                 when = inst.get("installed_at", "")[:16].replace("T", " ")
                 stale = inst.get("exe_timestamp") != st["exe_timestamp"]
                 newer = parse_version(inst.get("patch_version", "0")) < parse_version(st["available_version"])
@@ -1496,8 +1575,12 @@ def run_gui(game_arg=None, updated=False):
                 rows["patch"].configure(text=f"적용됨  v{inst.get('patch_version')}  ({when})" + note, fg=YELLOW if stale or newer else GREEN)
             else:
                 rows["patch"].configure(text="적용 안 됨", fg=DIM)
-            notes = [why or "이 게임 버전에 넣을 수 있습니다."]
-            if st["dfhack"]:
+            notes = [why or ("이 게임 버전에서 쓸 수 있습니다." if workshop else "이 게임 버전에 넣을 수 있습니다.")]
+            if workshop:
+                notes.append("창작마당으로 설치한 게임입니다. [한글패치 적용]과 깃헙 업데이트는 쓰지 않습니다\n(이 프로그램으로 넣으면 스팀의 자동 갱신이 끊깁니다). 글꼴과 이름 표기는 그대로 바꿀 수 있습니다.")
+            if st["dfhack"] and workshop:
+                notes.append("DFHack 이 있습니다 (같이 쓸 수 있습니다).")
+            elif st["dfhack"]:
                 notes.append("DFHack 이 있습니다. 같이 쓸 수 있게 넣습니다.")
             elif st["foreign_dfhooks"]:
                 notes.append("다른 프로그램의 dfhooks.dll 이 있습니다.")
@@ -1516,9 +1599,16 @@ def run_gui(game_arg=None, updated=False):
                 head = hook["reason"] if hook["crashed"] else f"한글이 꺼진 채로 실행됐습니다.\n사유: {hook['reason']}"
                 advice = hook["advice"].replace("[한글패치 다시 적용]을", "[새 버전 넣기]를") if newer else hook["advice"]    # 초록 단추의 글과 맞춘다
                 rows["hook"].configure(text=head + (f"\n{advice}" if advice else ""), fg=RED)
-            apply_btn.set(enabled=not why, text=f"새 버전 넣기 (v{st['available_version']})" if newer else "한글패치 다시 적용" if inst else "한글패치 적용")
+            if workshop:
+                apply_btn.set(enabled=False, text="창작마당으로 설치됨")
+            else:
+                apply_btn.set(enabled=not why, text=f"새 버전 넣기 (v{st['available_version']})" if newer else "한글패치 다시 적용" if inst else "한글패치 적용")
             undo_btn.set(enabled=installed)
             record_chk.set(value=st["record"])
+            if was_workshop and not workshop:
+                # [원래대로]로 창작마당 설치를 뺐다: 꺼 두었던 새 버전 확인을 다시 한다
+                rows["program"].configure(text=f"v{version}", fg=TEXT)
+                root.after(100, check_update_async)
         # 글꼴, 이름 표기, 제보 칸
         for b in list(font_btns.values()) + [file_btn, report_btn]:
             b.set(enabled=installed, selected=False)
@@ -1585,6 +1675,11 @@ def run_gui(game_arg=None, updated=False):
     def show_update(releases, error=None):
         notes["releases"] = releases or []
         render_notes()
+        if state.get("channel") == "workshop":
+            # 창작마당으로 깐 게임: 업데이트 내용은 보여 주되 받으라고 권하지 않는다 (받아도 게임에는 못 넣는다)
+            state["update"] = None
+            update_btn.frame.grid_remove()
+            return
         if error:
             rows["program"].configure(text=f"v{version}  (새 버전 확인을 못 했습니다: 인터넷 연결을 확인해 주세요)", fg=DIM)
             return
@@ -1611,7 +1706,7 @@ def run_gui(game_arg=None, updated=False):
 
     def offer_update():
         update = state["update"]
-        if not update or state["busy"]:
+        if not update or state["busy"] or state.get("channel") == "workshop":
             return
         if not package_dir():
             log(f"  받는 곳: {update['page']}")
@@ -1671,6 +1766,8 @@ def run_gui(game_arg=None, updated=False):
             except (PatchError, TypeError, OSError):
                 return
             inst = st["installed"]
+            if st.get("channel") == "workshop":
+                return      # 창작마당으로 깐 게임에는 넣지 않는다
             if inst and parse_version(inst.get("patch_version", "0")) < parse_version(version) and not st["running"] and not why_incompatible(st):
                 if messagebox.askyesno("한국어 패치", f"프로그램을 v{version} 으로 바꿨습니다.\n게임에도 새 버전을 넣을까요? (지금 게임에는 v{inst.get('patch_version')})"):
                     guarded_cmd(do_install)()
@@ -1701,6 +1798,12 @@ def main():
         return run_gui(game_arg, updated)
     try:
         if args[0] == "update":
+            try:
+                if workshop_info(find_game(game_arg)):
+                    print("실패: " + WORKSHOP_BLOCK.split("\n\n")[0])
+                    return 1
+            except PatchError:
+                pass        # 게임을 못 찾았으면 프로그램만 바꾼다 (예전과 같다)
             update = check_update()
             if not update:
                 print(f"최신 버전입니다 (v{program_version()}).")
