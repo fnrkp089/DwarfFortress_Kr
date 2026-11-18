@@ -465,7 +465,7 @@ def install(game: Path, log=print):
         raise PatchError(
             "게임 폴더에 다른 프로그램의 dfhooks.dll 이 있습니다 (DFHack 은 아닙니다).\n"
             "한국어 패치와 같은 자리를 쓰기 때문에 함께 쓸 수 없습니다. 그 프로그램을 빼고 다시 해 보세요.")
-    # DFHack 의 dfhooks.dll 은 게임 폴더의 dfhooks_*.dll 을 전부 읽어 들인다: 그때는 dfhooks_kr.dll 로 넣어 같이 쓴다
+    # DFHack 의 dfhooks.dll 은 게임 폴더의 dfhooks_*.dll 을 전부 읽어 들인다: 그때는 dfhooks_kr.dll 로만 넣어 같이 쓴다
     target = chained if st["foreign_dfhooks"] else main
 
     dst = game / DATA_NAME
@@ -492,10 +492,11 @@ def install(game: Path, log=print):
             log("설정 파일이 새 판으로 바뀌었습니다. 예전 설정은 dfkr-data/config.old.txt 에 남겨 두었습니다.")
             continue
         (dst / name).write_bytes(blob)
-    shutil.copy2(payload / DLL_NAME, target)
-    other = main if target == chained else chained
-    if other != main or is_ours(other):
-        other.unlink(missing_ok=True)       # 예전에 다른 이름으로 넣은 우리 DLL
+    # dfhooks_kr.dll 은 늘 놓는다. DFHack 이 없으면 게임은 dfhooks.dll 만 읽으므로 한 번만 불린다. 나중에 DFHack 이 깔려
+    # dfhooks.dll 을 덮어써도 DFHack 의 연쇄 로더가 dfhooks_kr.dll 을 읽어 한글이 그대로 나온다 (0.13.3)
+    shutil.copy2(payload / DLL_NAME, chained)
+    if target == main:
+        shutil.copy2(payload / DLL_NAME, main)
 
     state = {
         "patch_version": patch_version(payload),
