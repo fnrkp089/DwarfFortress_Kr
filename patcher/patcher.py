@@ -59,7 +59,7 @@ STEAM_APP_ID = "975370"
 KEEP_ON_UPDATE = ("untranslated.txt", "config.txt")  # 다시 적용해도 지우지 않는 사용자 파일
 RECORD_FLAG = "record.flag"
 # 제보 묶음에 넣는 것 (dfkr-data 안. 사전과 글꼴은 넣지 않는다)
-REPORT_FILES = ("untranslated.txt", "dfkr-log.txt", "status.txt", "disabled.txt", "installed.json", "config.txt", "version.txt")
+REPORT_FILES = ("untranslated.txt", "dfkr-log.txt", "dfkr-log.prev.txt", "status.txt", "disabled.txt", "installed.json", "config.txt", "version.txt")
 # 같이 들어 있는 한글 글꼴: 이름 → (설명, 파일, 글자 틀(FONT_GRID), 굵기(FONT_BOLD))
 FONT_PRESETS = {
     "galmuri9": ("갈무리9 (도트, 기본)", "Galmuri9.ttf", 10, 1),
